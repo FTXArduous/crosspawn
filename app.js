@@ -260,6 +260,13 @@ const state = {
 const reportedMemoryGb = Number(navigator.deviceMemory || 0);
 const hardwareProfile = reportedMemoryGb > 0 && reportedMemoryGb < 4 ? "compact-web" : "standard-web";
 const searchConfig = { maxCandidates: 540, chunkSize: 24, importBatchSize: 6 };
+const memoryScale = reportedMemoryGb >= 16 ? 2.4 : reportedMemoryGb >= 8 ? 1.8 : reportedMemoryGb >= 4 ? 1.35 : 1;
+const memoryLimits = {
+  llmHistoryCap: Math.max(60, Math.floor(60 * memoryScale)),
+  llmAnnotationCap: Math.max(80, Math.floor(80 * memoryScale)),
+  annotationHistoryScanCap: Math.max(180, Math.floor(180 * memoryScale)),
+  evidenceCharBudget: Math.max(16000, Math.floor(16000 * memoryScale))
+};
 
 if (hardwareBadge) {
   hardwareBadge.textContent = reportedMemoryGb > 0
@@ -1310,13 +1317,42 @@ function buildLlmAttemptAnswerSummarized(query, combinedEvidenceText, refs) {
   );
 }
 
-function buildAnnotationSummaryAnswer(query, combinedEvidenceText) {
-  const pool = collectAnnotationPool();
+function buildShortLlmSummary(query, topThemes, refs, selectedAnnotationCount) {
+  return (
+    `Short local summary: For "${query}", the cited chapters point most strongly to ${topThemes.join(", ") || "scriptural alignment"}. ` +
+    `The answer was synthesized from ${refs.length} chapter citations with ${selectedAnnotationCount} top annotations used as secondary context.`
+  );
+}
+
+function getCappedCombinedEvidence(topChapters) {
+  let budgetLeft = memoryLimits.evidenceCharBudget;
+  const chunks = [];
+
+  topChapters.forEach((chapter) => {
+    const sourceText = String((chapter.evidence || []).join(" ") || "").trim();
+    if (!sourceText || budgetLeft <= 0) {
+      return;
+    }
+    const clipped = sourceText.slice(0, budgetLeft);
+    chunks.push(clipped);
+    budgetLeft -= clipped.length;
+  });
+
+  return chunks.join(" ");
+}
+
+function selectTopAnnotationsForQuestion(query, combinedEvidenceText) {
   const queryTokens = new Set(tokenize(query));
   const contextTokens = new Set(tokenize(combinedEvidenceText));
+  const qVec = textToThemeVector(query);
+  const cVec = textToThemeVector(combinedEvidenceText);
 
-  const scored = pool.map((item) => {
-    const tokens = tokenize(item.text);
+  const entries = collectAnnotationHistoryEntries()
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, memoryLimits.annotationHistoryScanCap);
+
+  const scored = entries.map((entry) => {
+    const tokens = tokenize(entry.text);
     const tokenSet = new Set(tokens);
 
     let queryOverlap = 0;
@@ -1333,41 +1369,48 @@ function buildAnnotationSummaryAnswer(query, combinedEvidenceText) {
       }
     });
 
-    const qVec = textToThemeVector(query);
-    const cVec = textToThemeVector(combinedEvidenceText);
-    const aVec = textToThemeVector(item.text);
-
+    const aVec = textToThemeVector(entry.text);
     const querySemantic = cosineSimilarity(aVec, qVec);
     const contextSemantic = cosineSimilarity(aVec, cVec);
-    const score = queryOverlap * 2 + contextOverlap * 0.75 + querySemantic * 5 + contextSemantic * 6;
+    const score = queryOverlap * 2.5 + contextOverlap * 1.1 + querySemantic * 5 + contextSemantic * 7;
 
     return {
-      source: item.source,
-      text: item.text,
+      source: entry.source,
+      text: entry.text,
       queryOverlap,
       contextOverlap,
+      querySemantic,
+      contextSemantic,
       score
     };
   });
 
-  if (!scored.length) {
+  return {
+    scanned: entries.length,
+    selected: scored
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+  };
+}
+
+function buildAnnotationSummaryAnswer(query, combinedEvidenceText, precomputedSelection) {
+  const selection = precomputedSelection || selectTopAnnotationsForQuestion(query, combinedEvidenceText);
+  if (!selection.selected.length) {
     return "No annotations found. Add manual or community annotations to include annotation-aware synthesis.";
   }
 
-  const ranked = scored.sort((a, b) => b.score - a.score);
-  const topMentions = ranked
-    .slice(0, 8)
+  const topMentions = selection.selected
     .map((item, idx) =>
       `${idx + 1}. ${item.source} | score=${item.score.toFixed(2)} | qOverlap=${item.queryOverlap} | ctxOverlap=${item.contextOverlap}\n` +
       `   ${item.text.slice(0, 280)}`
     )
     .join("\n\n");
 
-  const communityCount = pool.filter((x) => x.source.startsWith("Community:")).length;
-  const manualCount = pool.length - communityCount;
+  const communityCount = selection.selected.filter((x) => x.source.startsWith("Community:")).length;
+  const selectedCount = selection.selected.length;
 
   return (
-    `Processed all annotations: ${pool.length} total (${communityCount} community, ${manualCount} manual).\n` +
+    `Processed annotations within local memory threshold: scanned ${selection.scanned}, selected top ${selectedCount} of 8 (${communityCount} community).\n` +
     "Primary authority: cited scripture/library passages first; annotations are secondary support only.\n" +
     "Annotation-weighted reading: strongest notes reinforce repentance, truth, repair, and mercy under accountable justice.\n\n" +
     "Most relevant annotation signals:\n" +
@@ -1435,7 +1478,9 @@ function searchAllAnnotationHistory() {
 
   const qTokens = tokenize(query);
   const qVec = textToThemeVector(query);
-  const entries = collectAnnotationHistoryEntries();
+  const entries = collectAnnotationHistoryEntries()
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, memoryLimits.annotationHistoryScanCap);
 
   if (!entries.length) {
     annotationHistoryResultsBox.value = "No annotation history available yet.";
@@ -1630,7 +1675,7 @@ function runSinLookup() {
     `${buildMercySuggestions(query)}`;
 }
 
-function askMiniLlm() {
+async function askMiniLlm() {
   const query = queryInput.value.trim();
   if (!query) {
     resultsBox.value = "Enter a question for the mini LLM.";
@@ -1648,27 +1693,39 @@ function askMiniLlm() {
     return;
   }
 
+  setLoadingState(true, "Mini LLM understanding pass 1/3: retrieving strongest scripture chapters...", 24);
+  await nextFrame();
+
   const top = chapterLevelSearch(query).slice(0, 8);
 
   const refs = top.map((d) => `${d.book} ${d.chapter}`);
-  const combined = top.map((d) => d.evidence.join(" ")).join(" ");
+  const combined = getCappedCombinedEvidence(top);
   renderReferenceButtons(aiReferencesBox, refs);
 
-  const themes = Object.keys(themeVectors)
+  const topThemes = Object.keys(themeVectors)
     .map((name, idx) => ({ name, weight: textToThemeVector(combined)[idx] }))
     .sort((a, b) => b.weight - a.weight)
     .slice(0, 3)
-    .map((x) => x.name)
-    .join(", ");
+    .map((x) => x.name);
 
-  const annotationAnswerText = buildAnnotationSummaryAnswer(query, combined);
+  setLoadingState(true, "Mini LLM understanding pass 2/3: comparing annotations to cited scripture evidence...", 58);
+  await nextFrame();
+
+  const annotationSelection = selectTopAnnotationsForQuestion(query, combined);
+  const annotationAnswerText = buildAnnotationSummaryAnswer(query, combined, annotationSelection);
+
+  setLoadingState(true, "Mini LLM understanding pass 3/3: synthesizing concise local answer...", 86);
+  await nextFrame();
+
+  const shortSummary = buildShortLlmSummary(query, topThemes, refs, annotationSelection.selected.length);
 
   const answer =
     `Mini LLM (local retrieval + synthesis)\n` +
     `Question: ${query}\n\n` +
     `${primaryAuthorityPolicyText}\n\n` +
+    `${shortSummary}\n\n` +
     `Answer:\n` +
-    `Based on the highest-matching passages, the dominant scriptural themes are ${themes}. ` +
+    `Based on the highest-matching passages, the dominant scriptural themes are ${topThemes.join(", ")}. ` +
     `A careful reading points toward repentance, truth, and mercy joined with accountable justice rather than revenge. ` +
     `Use the cited passages below as primary authority for interpretation.\n\n` +
     `Citations:\n- ${refs.join("\n- ")}\n\n` +
@@ -1685,12 +1742,12 @@ function askMiniLlm() {
     text: annotationAnswerText,
     createdAt: Date.now()
   });
-  if (state.llmAnnotationAnswerHistory.length > 80) {
-    state.llmAnnotationAnswerHistory = state.llmAnnotationAnswerHistory.slice(-80);
+  if (state.llmAnnotationAnswerHistory.length > memoryLimits.llmAnnotationCap) {
+    state.llmAnnotationAnswerHistory = state.llmAnnotationAnswerHistory.slice(-memoryLimits.llmAnnotationCap);
   }
   state.llmSummaryHistory.push({ query, answer, refs, createdAt: Date.now() });
-  if (state.llmSummaryHistory.length > 60) {
-    state.llmSummaryHistory = state.llmSummaryHistory.slice(-60);
+  if (state.llmSummaryHistory.length > memoryLimits.llmHistoryCap) {
+    state.llmSummaryHistory = state.llmSummaryHistory.slice(-memoryLimits.llmHistoryCap);
   }
 }
 
