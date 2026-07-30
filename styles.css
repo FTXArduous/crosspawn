@@ -306,6 +306,10 @@ textarea {
   min-height: 190px;
 }
 
+#annotationHistoryResultsBox {
+  min-height: 230px;
+}
+
 @media (min-width: 960px) {
   .research-layout {
     grid-template-columns: 5fr 1fr;

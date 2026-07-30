@@ -189,6 +189,19 @@
 
           <label for="annotationSummaryBox" class="status-label">Relative Annotation Summary Output</label>
           <textarea id="annotationSummaryBox" readonly>No rendered summary yet.</textarea>
+
+          <h3>Annotation History Search</h3>
+          <div class="field-grid">
+            <label for="annotationHistoryQuery">Search All Annotation History</label>
+            <input id="annotationHistoryQuery" type="text" autocomplete="off" placeholder="Search annotation history by phrase or term" />
+          </div>
+
+          <div class="controls slim-controls">
+            <button id="searchAnnotationHistoryBtn" type="button">Search Annotation History</button>
+          </div>
+
+          <label for="annotationHistoryResultsBox" class="status-label">Annotation History Search Results</label>
+          <textarea id="annotationHistoryResultsBox" readonly>No annotation history search run yet.</textarea>
         </div>
       </div>
     </section>

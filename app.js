@@ -52,6 +52,9 @@ const relativeAnnotationsInput = document.getElementById("relativeAnnotationsInp
 const relativeAnnotationsValue = document.getElementById("relativeAnnotationsValue");
 const renderSummaryBtn = document.getElementById("renderSummaryBtn");
 const annotationSummaryBox = document.getElementById("annotationSummaryBox");
+const annotationHistoryQuery = document.getElementById("annotationHistoryQuery");
+const searchAnnotationHistoryBtn = document.getElementById("searchAnnotationHistoryBtn");
+const annotationHistoryResultsBox = document.getElementById("annotationHistoryResultsBox");
 const loadingOverlay = document.getElementById("loadingOverlay");
 const loadingText = document.getElementById("loadingText");
 const loadingBar = document.getElementById("loadingBar");
@@ -247,7 +250,8 @@ const state = {
   runtimeDirty: true,
   activeIntegratedSource: "",
   llmSummaryHistory: [],
-  annotationSummaryHistory: []
+  annotationSummaryHistory: [],
+  llmAnnotationAnswerHistory: []
 };
 
 const reportedMemoryGb = Number(navigator.deviceMemory || 0);
@@ -1278,6 +1282,201 @@ function collectAnnotationPool() {
   return pool.filter((entry) => entry.text.length > 0);
 }
 
+function summarizeTopThemesFromVector(vec, topN) {
+  return Object.keys(themeVectors)
+    .map((name, idx) => ({ name, weight: Number(vec[idx] || 0) }))
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, topN)
+    .map((x) => x.name);
+}
+
+function buildLlmAttemptAnswerSummarized(query, combinedEvidenceText, refs) {
+  const queryVec = textToThemeVector(query);
+  const evidenceVec = textToThemeVector(combinedEvidenceText);
+  const queryThemes = summarizeTopThemesFromVector(queryVec, 3);
+  const evidenceThemes = summarizeTopThemesFromVector(evidenceVec, 4);
+
+  return (
+    `Question focus themes: ${queryThemes.join(", ") || "none"}. ` +
+    `Retrieved passage themes: ${evidenceThemes.join(", ") || "none"}. ` +
+    "Across the retrieved chapters, the synthesis trends toward repentance, truthful confession, " +
+    "mercy with accountability, and restoration rather than retaliation. " +
+    "A careful reading keeps justice proportional while preserving room for forgiveness and covenant repair. " +
+    `This summary was produced from ${refs.length} cited chapter sources in the current filters.`
+  );
+}
+
+function buildAnnotationSummaryAnswer(query, combinedEvidenceText) {
+  const pool = collectAnnotationPool();
+  const queryTokens = new Set(tokenize(query));
+  const contextTokens = new Set(tokenize(combinedEvidenceText));
+
+  const scored = pool.map((item) => {
+    const tokens = tokenize(item.text);
+    const tokenSet = new Set(tokens);
+
+    let queryOverlap = 0;
+    queryTokens.forEach((token) => {
+      if (tokenSet.has(token)) {
+        queryOverlap += 1;
+      }
+    });
+
+    let contextOverlap = 0;
+    contextTokens.forEach((token) => {
+      if (tokenSet.has(token)) {
+        contextOverlap += 1;
+      }
+    });
+
+    const qVec = textToThemeVector(query);
+    const cVec = textToThemeVector(combinedEvidenceText);
+    const aVec = textToThemeVector(item.text);
+
+    const querySemantic = cosineSimilarity(aVec, qVec);
+    const contextSemantic = cosineSimilarity(aVec, cVec);
+    const score = queryOverlap * 2 + contextOverlap * 0.75 + querySemantic * 5 + contextSemantic * 6;
+
+    return {
+      source: item.source,
+      text: item.text,
+      queryOverlap,
+      contextOverlap,
+      score
+    };
+  });
+
+  if (!scored.length) {
+    return "No annotations found. Add manual or community annotations to include annotation-aware synthesis.";
+  }
+
+  const ranked = scored.sort((a, b) => b.score - a.score);
+  const topMentions = ranked
+    .slice(0, 8)
+    .map((item, idx) =>
+      `${idx + 1}. ${item.source} | score=${item.score.toFixed(2)} | qOverlap=${item.queryOverlap} | ctxOverlap=${item.contextOverlap}\n` +
+      `   ${item.text.slice(0, 280)}`
+    )
+    .join("\n\n");
+
+  const communityCount = pool.filter((x) => x.source.startsWith("Community:")).length;
+  const manualCount = pool.length - communityCount;
+
+  return (
+    `Processed all annotations: ${pool.length} total (${communityCount} community, ${manualCount} manual).\n` +
+    "Annotation-weighted reading: strongest notes reinforce repentance, truth, repair, and mercy under accountable justice.\n\n" +
+    "Most relevant annotation signals:\n" +
+    `${topMentions}`
+  );
+}
+
+function collectAnnotationHistoryEntries() {
+  const entries = [];
+
+  state.communityAnnotations.forEach((item) => {
+    entries.push({
+      source: `Community:${item.user}`,
+      text: String(item.text || "").trim(),
+      createdAt: item.createdAt || 0
+    });
+  });
+
+  [
+    { source: "Manual:Search", text: searchAnnotation.value },
+    { source: "Manual:Deep", text: deepAnnotation.value },
+    { source: "Manual:Compare", text: compareAnnotation.value }
+  ].forEach((item) => {
+    const text = String(item.text || "").trim();
+    if (text) {
+      entries.push({ source: item.source, text, createdAt: 0 });
+    }
+  });
+
+  state.annotationSummaryHistory.forEach((item, idx) => {
+    const text = String(item.output || "").trim();
+    if (text) {
+      entries.push({
+        source: `RenderedSummary:${idx + 1}`,
+        text,
+        createdAt: item.createdAt || 0
+      });
+    }
+  });
+
+  state.llmAnnotationAnswerHistory.forEach((item, idx) => {
+    const text = String(item.text || "").trim();
+    if (text) {
+      entries.push({
+        source: `LLMAnnotationAnswer:${idx + 1}`,
+        text,
+        createdAt: item.createdAt || 0
+      });
+    }
+  });
+
+  return entries.filter((item) => item.text.length > 0);
+}
+
+function searchAllAnnotationHistory() {
+  if (!annotationHistoryResultsBox) {
+    return;
+  }
+
+  const query = String(annotationHistoryQuery ? annotationHistoryQuery.value : "").trim();
+  if (!query) {
+    annotationHistoryResultsBox.value = "Enter a history query first.";
+    return;
+  }
+
+  const qTokens = tokenize(query);
+  const qVec = textToThemeVector(query);
+  const entries = collectAnnotationHistoryEntries();
+
+  if (!entries.length) {
+    annotationHistoryResultsBox.value = "No annotation history available yet.";
+    return;
+  }
+
+  const ranked = entries
+    .map((entry) => {
+      const norm = normalize(entry.text);
+      const tokenHits = qTokens.reduce((sum, token) => sum + countOccurrences(norm, token), 0);
+      const semantic = cosineSimilarity(qVec, textToThemeVector(entry.text));
+      return {
+        source: entry.source,
+        text: entry.text,
+        createdAt: entry.createdAt,
+        score: tokenHits * 3 + semantic * 8,
+        tokenHits,
+        semantic
+      };
+    })
+    .filter((item) => item.tokenHits > 0 || item.semantic > 0.08)
+    .sort((a, b) => b.score - a.score);
+
+  if (!ranked.length) {
+    annotationHistoryResultsBox.value =
+      `Annotation history entries scanned: ${entries.length}\n` +
+      `No matches found for: ${query}`;
+    return;
+  }
+
+  annotationHistoryResultsBox.value =
+    `Annotation history query: ${query}\n` +
+    `Entries scanned: ${entries.length}\n` +
+    `Matches found: ${ranked.length}\n\n` +
+    ranked
+      .slice(0, 40)
+      .map((item, idx) => {
+        const when = item.createdAt ? new Date(item.createdAt).toLocaleString() : "current-session";
+        return (
+          `${idx + 1}. ${item.source} | score=${item.score.toFixed(3)} | tokenHits=${item.tokenHits} | semantic=${item.semantic.toFixed(3)} | ${when}\n` +
+          `${item.text.slice(0, 420)}`
+        );
+      })
+      .join("\n\n");
+}
+
 async function renderRelativeAnnotationSummary() {
   const threshold = Number(relativeAnnotationsInput ? relativeAnnotationsInput.value : 30);
   const annotationPool = collectAnnotationPool();
@@ -1347,7 +1546,7 @@ async function renderRelativeAnnotationSummary() {
       : "No annotations met the current relatedness threshold.");
 
   annotationSummaryBox.value = output;
-  state.annotationSummaryHistory.push({ threshold, createdAt: Date.now(), relatedCount: matches.length });
+  state.annotationSummaryHistory.push({ threshold, createdAt: Date.now(), relatedCount: matches.length, output });
 }
 
 function runSearch() {
@@ -1456,6 +1655,8 @@ function askMiniLlm() {
     .map((x) => x.name)
     .join(", ");
 
+  const annotationAnswerText = buildAnnotationSummaryAnswer(query, combined);
+
   const answer =
     `Mini LLM (local retrieval + synthesis)\n` +
     `Question: ${query}\n\n` +
@@ -1464,9 +1665,22 @@ function askMiniLlm() {
     `A careful reading points toward repentance, truth, and mercy joined with accountable justice rather than revenge. ` +
     `Use the cited passages below as primary authority for interpretation.\n\n` +
     `Citations:\n- ${refs.join("\n- ")}\n\n` +
-    `${noFuturePolicyText}`;
+    `${noFuturePolicyText}\n\n` +
+    `LLM Attempt Answer Summarized:\n` +
+    `${buildLlmAttemptAnswerSummarized(query, combined, refs)}\n\n` +
+    `Annotation Summary Answer:\n` +
+    `${annotationAnswerText}`;
 
   resultsBox.value = answer;
+  annotationSummaryBox.value = annotationAnswerText;
+  state.llmAnnotationAnswerHistory.push({
+    query,
+    text: annotationAnswerText,
+    createdAt: Date.now()
+  });
+  if (state.llmAnnotationAnswerHistory.length > 80) {
+    state.llmAnnotationAnswerHistory = state.llmAnnotationAnswerHistory.slice(-80);
+  }
   state.llmSummaryHistory.push({ query, answer, refs, createdAt: Date.now() });
   if (state.llmSummaryHistory.length > 60) {
     state.llmSummaryHistory = state.llmSummaryHistory.slice(-60);
@@ -1700,6 +1914,12 @@ function resetEphemeralAnnotationState() {
   annotUserInput.value = "";
   annotTextInput.value = "";
   annotationSummaryBox.value = "No rendered summary yet.";
+  if (annotationHistoryQuery) {
+    annotationHistoryQuery.value = "";
+  }
+  if (annotationHistoryResultsBox) {
+    annotationHistoryResultsBox.value = "No annotation history search run yet.";
+  }
 }
 
 startBtn.addEventListener("click", startPrayer);
@@ -1719,6 +1939,7 @@ playDeepBtn.addEventListener("click", () => playTextBundle([deepReportBox.value,
 playCompareBtn.addEventListener("click", () => playTextBundle([compareBox.value, compareAnnotation.value]));
 addAnnotationBtn.addEventListener("click", addCommunityAnnotation);
 playAnnotationFeedBtn.addEventListener("click", () => playTextBundle([annotationFeedBox.value]));
+searchAnnotationHistoryBtn.addEventListener("click", searchAllAnnotationHistory);
 renderSummaryBtn.addEventListener("click", () => runTaskWithLoading("Rendering relative annotation summary...", async () => renderRelativeAnnotationSummary(), false));
 chooseReadBtn.addEventListener("click", () => {
   const selected = chapterReadSelect.value;
