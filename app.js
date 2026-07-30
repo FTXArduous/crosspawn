@@ -68,6 +68,9 @@ let loopToken = 0;
 const noFuturePolicyText =
   "This engine can search scripture and meanings, but it cannot suggest or predict the future. Future suggestion is hardcoded as disabled.";
 
+const primaryAuthorityPolicyText =
+  "Primary authority policy: book/library scripture text and cited passages are first precedence; LLM synthesis and annotations are secondary and cannot override cited text.";
+
 const futureRequestTerms = ["future", "predict", "prophecy", "what will happen", "tomorrow", "next year", "destiny"];
 
 const themeVectors = {
@@ -1299,6 +1302,7 @@ function buildLlmAttemptAnswerSummarized(query, combinedEvidenceText, refs) {
   return (
     `Question focus themes: ${queryThemes.join(", ") || "none"}. ` +
     `Retrieved passage themes: ${evidenceThemes.join(", ") || "none"}. ` +
+    "Primary authority remains the cited chapter text first. " +
     "Across the retrieved chapters, the synthesis trends toward repentance, truthful confession, " +
     "mercy with accountability, and restoration rather than retaliation. " +
     "A careful reading keeps justice proportional while preserving room for forgiveness and covenant repair. " +
@@ -1364,6 +1368,7 @@ function buildAnnotationSummaryAnswer(query, combinedEvidenceText) {
 
   return (
     `Processed all annotations: ${pool.length} total (${communityCount} community, ${manualCount} manual).\n` +
+    "Primary authority: cited scripture/library passages first; annotations are secondary support only.\n" +
     "Annotation-weighted reading: strongest notes reinforce repentance, truth, repair, and mercy under accountable justice.\n\n" +
     "Most relevant annotation signals:\n" +
     `${topMentions}`
@@ -1463,6 +1468,7 @@ function searchAllAnnotationHistory() {
 
   annotationHistoryResultsBox.value =
     `Annotation history query: ${query}\n` +
+    `${primaryAuthorityPolicyText}\n` +
     `Entries scanned: ${entries.length}\n` +
     `Matches found: ${ranked.length}\n\n` +
     ranked
@@ -1660,6 +1666,7 @@ function askMiniLlm() {
   const answer =
     `Mini LLM (local retrieval + synthesis)\n` +
     `Question: ${query}\n\n` +
+    `${primaryAuthorityPolicyText}\n\n` +
     `Answer:\n` +
     `Based on the highest-matching passages, the dominant scriptural themes are ${themes}. ` +
     `A careful reading points toward repentance, truth, and mercy joined with accountable justice rather than revenge. ` +
