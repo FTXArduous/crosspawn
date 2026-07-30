@@ -1324,6 +1324,51 @@ function buildShortLlmSummary(query, topThemes, refs, selectedAnnotationCount) {
   );
 }
 
+function buildGeneratedAttemptAnswer(query, topChapters, topThemes, selectedAnnotations) {
+  const qTokens = tokenize(query);
+  const evidenceSentences = [];
+
+  topChapters.forEach((chapter) => {
+    const lines = (chapter.evidence || [])
+      .join(" ")
+      .split(/(?<=[.!?])\s+/)
+      .map((line) => String(line || "").trim())
+      .filter((line) => line.length > 20);
+
+    lines.forEach((line) => {
+      if (evidenceSentences.length >= 6) {
+        return;
+      }
+      const norm = normalize(line);
+      const hit = qTokens.some((token) => norm.includes(token));
+      if (hit || evidenceSentences.length < 3) {
+        evidenceSentences.push(line.slice(0, 210));
+      }
+    });
+  });
+
+  const evidenceLead = evidenceSentences.length
+    ? evidenceSentences.slice(0, 2).join(" ")
+    : "The selected chapter evidence points to a scripture-grounded response within the current filters.";
+
+  const annotationLead = selectedAnnotations.length
+    ? selectedAnnotations
+      .slice(0, 2)
+      .map((item) => item.text.slice(0, 130).replace(/\s+/g, " ").trim())
+      .join(" | ")
+    : "No annotation signals were available, so this attempt is based on scripture evidence alone.";
+
+  const dominant = topThemes[0] || "scriptural guidance";
+  const supporting = topThemes.slice(1).join(" and ") || "contextual discernment";
+
+  return (
+    `For the question "${query}", the local model reads the cited chapters with ${dominant} as the dominant lens and ${supporting} as supporting context. ` +
+    `${evidenceLead} ` +
+    `Annotation signals selected for comparison were: ${annotationLead}. ` +
+    "Generated attempt: pursue truth, repentance, and restorative mercy while keeping justice accountable and proportional to what the cited text actually says."
+  );
+}
+
 function getCappedCombinedEvidence(topChapters) {
   let budgetLeft = memoryLimits.evidenceCharBudget;
   const chunks = [];
@@ -1718,6 +1763,7 @@ async function askMiniLlm() {
   await nextFrame();
 
   const shortSummary = buildShortLlmSummary(query, topThemes, refs, annotationSelection.selected.length);
+  const generatedAttemptAnswer = buildGeneratedAttemptAnswer(query, top, topThemes, annotationSelection.selected);
 
   const answer =
     `Mini LLM (local retrieval + synthesis)\n` +
@@ -1732,6 +1778,8 @@ async function askMiniLlm() {
     `${noFuturePolicyText}\n\n` +
     `LLM Attempt Answer Summarized:\n` +
     `${buildLlmAttemptAnswerSummarized(query, combined, refs)}\n\n` +
+    `Generated Attempt Answer (scripture-first):\n` +
+    `${generatedAttemptAnswer}\n\n` +
     `Annotation Summary Answer:\n` +
     `${annotationAnswerText}`;
 
