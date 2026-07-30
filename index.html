@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CrossPawn</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="loadingOverlay" class="loading-overlay hidden" aria-live="polite" aria-busy="false">
+    <div class="loading-card">
+      <div class="loading-title">Loading CrossPawn Library</div>
+      <div id="loadingText" class="loading-text">Preparing scripture library...</div>
+      <div class="loading-track"><div id="loadingBar" class="loading-bar"></div></div>
+      <div class="loading-note">Loading staged scripture and related annotation context.</div>
+    </div>
+  </div>
+  <main class="app-shell">
+    <section class="card prayer-card">
+      <h1>CrossPawn Prayer Voice</h1>
+      <p class="subtitle">Spoken prayer loop with start and stop controls.</p>
+
+      <div class="controls prayer-controls">
+        <button id="startBtn" type="button">Start Prayer</button>
+        <button id="stopBtn" type="button" disabled>Stop</button>
+      </div>
+
+      <div class="settings">
+        <label for="rateInput">Speech Rate</label>
+        <input id="rateInput" type="range" min="0.7" max="1.3" value="0.95" step="0.05" />
+
+        <label for="pitchInput">Speech Pitch</label>
+        <input id="pitchInput" type="range" min="0.7" max="1.4" value="1" step="0.05" />
+      </div>
+
+      <label for="status" class="status-label">Status</label>
+      <textarea id="status" readonly>Ready.</textarea>
+    </section>
+
+    <section class="card search-card">
+      <h2>Bible Research Engine</h2>
+      <p class="edition-subtitle">The Bible In the Latest Addition by the Roman Catholic Church approximately circa 2020 or later.</p>
+      <p class="subtitle">Concept-aware search with local library import for Bible, Psalms, Book of Mormon, hymns, and Enoch extension content.</p>
+
+      <h3>Library Loader</h3>
+      <div class="field-grid">
+        <label for="libraryFileInput">Import Scripture JSON File(s)</label>
+        <input id="libraryFileInput" type="file" accept=".json,application/json" multiple />
+
+        <label for="integratedSourceSelect">Integrated Bible / Source</label>
+        <select id="integratedSourceSelect">
+          <option value="">Choose a specific integrated source...</option>
+        </select>
+      </div>
+
+      <div class="controls">
+        <button id="loadLibraryBtn" type="button">Load Selected Library</button>
+        <button id="loadIntegratedBtn" type="button">Load Integrated Library</button>
+        <button id="resetLibraryBtn" type="button">Reset To Starter Library</button>
+      </div>
+
+      <label for="libraryStatusBox" class="status-label">Library Status</label>
+      <textarea id="libraryStatusBox" readonly>Starter library loaded. Add full-text JSON files to expand lookup.</textarea>
+      <div class="hardware-badge" id="hardwareBadge">Hardware profile: detecting...</div>
+
+      <div class="research-layout">
+        <div class="left-pane">
+          <h3>Reading and Lookup</h3>
+          <div class="field-grid">
+            <label for="collectionFilter">Collection Filter</label>
+            <select id="collectionFilter">
+              <option value="ALL">All Collections</option>
+            </select>
+
+            <label for="queryInput">Search Question or Phrase</label>
+            <input id="queryInput" type="text" placeholder="Example: thy, thou, incense, forgiveness, eye for eye" />
+
+            <label for="bookFilter">Book Filter</label>
+            <select id="bookFilter">
+              <option value="ALL">All Books</option>
+            </select>
+          </div>
+
+          <div class="controls">
+            <button id="searchBtn" type="button">Run Search</button>
+            <button id="meaningsBtn" type="button">Explain Terms</button>
+            <button id="sinLookupBtn" type="button">Sin Type / Penalty Lookup</button>
+            <button id="askLlmBtn" type="button">Ask Mini LLM</button>
+          </div>
+
+          <label for="resultsBox" class="status-label">Search Results</label>
+          <textarea id="resultsBox" readonly>No search run yet.</textarea>
+
+          <div class="controls slim-controls">
+            <button id="chooseReadBtn" type="button">which part of the bible would you like to read?</button>
+            <select id="chapterReadSelect"></select>
+            <button id="openChapterBtn" type="button">Open Full Chapter</button>
+          </div>
+
+          <label for="resultReferencesBox" class="status-label">Result References (open full chapter)</label>
+          <div id="resultReferencesBox" class="reference-list"></div>
+
+          <label for="aiReferencesBox" class="status-label">AI Explanation References (open full chapter)</label>
+          <div id="aiReferencesBox" class="reference-list"></div>
+
+          <label for="chapterViewBox" class="status-label">Full Chapter Viewer</label>
+          <textarea id="chapterViewBox" readonly>Click any reference link to open a full chapter.</textarea>
+        </div>
+
+        <div class="right-pane">
+          <h3>Summaries and Annotations</h3>
+          <div class="field-grid">
+            <label for="chapterSelect">Chapter</label>
+            <select id="chapterSelect"></select>
+
+            <label for="targetKbInput">Target Knowledge Size (KB)</label>
+            <input id="targetKbInput" type="number" min="10" max="220" step="10" value="120" />
+          </div>
+
+          <div class="controls">
+            <button id="deepReportBtn" type="button">Build Deep Report</button>
+            <button id="bookSummaryBtn" type="button">Book Summaries</button>
+          </div>
+
+          <label for="deepReportBox" class="status-label">Deep Report / Summaries</label>
+          <textarea id="deepReportBox" readonly>Pick a chapter and build a report.</textarea>
+
+          <h3>Two-Book Comparison</h3>
+          <div class="field-grid">
+            <label for="compareBookA">Book A</label>
+            <select id="compareBookA"></select>
+
+            <label for="compareBookB">Book B</label>
+            <select id="compareBookB"></select>
+          </div>
+
+          <div class="controls">
+            <button id="compareBtn" type="button">Compare Books</button>
+          </div>
+
+          <label for="compareBox" class="status-label">Comparison Output</label>
+          <textarea id="compareBox" readonly>Choose two books and compare.</textarea>
+
+          <label for="searchAnnotation" class="status-label">Search Annotation (Manual)</label>
+          <textarea id="searchAnnotation" autocomplete="off" placeholder="Add notes by hand for this search summary."></textarea>
+          <div class="controls slim-controls">
+            <button id="playSearchBtn" type="button">Play Search + Annotation</button>
+          </div>
+
+          <label for="deepAnnotation" class="status-label">Deep Report Annotation (Manual)</label>
+          <textarea id="deepAnnotation" autocomplete="off" placeholder="Add notes by hand for chapter or book summaries."></textarea>
+          <div class="controls slim-controls">
+            <button id="playDeepBtn" type="button">Play Deep Report + Annotation</button>
+          </div>
+
+          <label for="compareAnnotation" class="status-label">Comparison Annotation (Manual)</label>
+          <textarea id="compareAnnotation" autocomplete="off" placeholder="Add notes by hand for the two-book comparison."></textarea>
+          <div class="controls slim-controls">
+            <button id="playCompareBtn" type="button">Play Comparison + Annotation</button>
+          </div>
+
+          <h3>Community Annotations</h3>
+          <div class="field-grid">
+            <label for="annotUserInput">Username (max 35)</label>
+            <input id="annotUserInput" type="text" maxlength="35" autocomplete="off" placeholder="Enter username" />
+
+            <label for="annotTextInput">Annotation (max 2400)</label>
+            <textarea id="annotTextInput" maxlength="2400" autocomplete="off" placeholder="Enter annotation text from any reader."></textarea>
+          </div>
+
+          <div class="controls slim-controls">
+            <button id="addAnnotationBtn" type="button">Add Annotation</button>
+            <button id="playAnnotationFeedBtn" type="button">Play Annotation Feed</button>
+          </div>
+
+          <label for="annotationFeedBox" class="status-label">Annotation Feed</label>
+          <textarea id="annotationFeedBox" readonly>No community annotations yet.</textarea>
+
+          <h3>Relative Annotation Summary</h3>
+          <div class="field-grid">
+            <label for="relativeAnnotationsInput">Related Annotation Threshold</label>
+            <input id="relativeAnnotationsInput" type="range" min="0" max="100" step="1" value="30" />
+            <div id="relativeAnnotationsValue" class="threshold-note">30% relative annotations</div>
+          </div>
+
+          <div class="controls slim-controls">
+            <button id="renderSummaryBtn" type="button">Render Summary</button>
+          </div>
+
+          <label for="annotationSummaryBox" class="status-label">Relative Annotation Summary Output</label>
+          <textarea id="annotationSummaryBox" readonly>No rendered summary yet.</textarea>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

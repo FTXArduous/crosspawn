@@ -1,0 +1,37 @@
+{
+  "name": "crosspawn",
+  "version": "1.0.0",
+  "description": "CrossPawn website and desktop app",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start:web": "node serve.js 8787",
+    "start:desktop": "electron .",
+    "build:win": "electron-builder --win portable",
+    "build:win:packager": "electron-packager . CrossPawn --platform=win32 --arch=x64 --overwrite --out=dist-packager --prune=true",
+    "deploy:netlify": "npx netlify deploy --dir . --prod"
+  },
+  "build": {
+    "appId": "com.crosspawn.app",
+    "productName": "CrossPawn",
+    "files": [
+      "index.html",
+      "styles.css",
+      "app.js",
+      "library/**/*",
+      "main.js",
+      "serve.js",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^24.13.3",
+    "electron-packager": "^17.1.2"
+  }
+}
