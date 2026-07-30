@@ -252,6 +252,7 @@ const state = {
   integratedLoaded: true,
   runtimeDirty: true,
   activeIntegratedSource: "",
+  llmGenerationNonce: 0,
   llmSummaryHistory: [],
   annotationSummaryHistory: [],
   llmAnnotationAnswerHistory: []
@@ -303,6 +304,39 @@ function normalize(text) {
 
 function tokenize(text) {
   return normalize(text).split(" ").filter(Boolean);
+}
+
+function hashString(text) {
+  const src = String(text || "");
+  let hash = 0;
+  for (let i = 0; i < src.length; i += 1) {
+    hash = (hash * 31 + src.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+function pickFrom(list, seed) {
+  if (!Array.isArray(list) || !list.length) {
+    return "";
+  }
+  const idx = Math.abs(Number(seed || 0)) % list.length;
+  return list[idx];
+}
+
+function stylePhraseForTheme(themeName, seed) {
+  const bank = {
+    justice: ["accountable justice", "measured justice", "lawful correction"],
+    mercy: ["restorative mercy", "compassion with repair", "forgiveness joined to truth"],
+    purity: ["inner cleansing", "moral clarity", "purified intent"],
+    meaning: ["wise discernment", "purpose in obedience", "humble understanding"],
+    kingdom: ["reverence before God", "covenant loyalty", "worshipful obedience"],
+    defense: ["protective restraint", "guarded stewardship", "watchful responsibility"],
+    repentance: ["repentant return", "confession and turning", "renewed obedience"]
+  };
+
+  const key = String(themeName || "").toLowerCase();
+  const options = bank[key] || [themeName || "scriptural focus"];
+  return pickFrom(options, seed);
 }
 
 function countOccurrences(text, word) {
@@ -1300,31 +1334,53 @@ function summarizeTopThemesFromVector(vec, topN) {
     .map((x) => x.name);
 }
 
-function buildLlmAttemptAnswerSummarized(query, combinedEvidenceText, refs) {
+function buildLlmAttemptAnswerSummarized(query, combinedEvidenceText, refs, generationSeed) {
   const queryVec = textToThemeVector(query);
   const evidenceVec = textToThemeVector(combinedEvidenceText);
   const queryThemes = summarizeTopThemesFromVector(queryVec, 3);
   const evidenceThemes = summarizeTopThemesFromVector(evidenceVec, 4);
+  const bridgeA = pickFrom([
+    "A coherent reading favors",
+    "The passage-weighted pattern points toward",
+    "The strongest cross-chapter direction emphasizes"
+  ], generationSeed + 11);
+  const bridgeB = pickFrom([
+    "while avoiding retaliatory escalation.",
+    "instead of reactionary judgment.",
+    "and resists revenge-centered interpretation."
+  ], generationSeed + 17);
+  const t0 = stylePhraseForTheme(evidenceThemes[0], generationSeed + 23) || "scriptural coherence";
+  const t1 = stylePhraseForTheme(evidenceThemes[1], generationSeed + 31) || "faithful discernment";
 
   return (
     `Question focus themes: ${queryThemes.join(", ") || "none"}. ` +
     `Retrieved passage themes: ${evidenceThemes.join(", ") || "none"}. ` +
     "Primary authority remains the cited chapter text first. " +
-    "Across the retrieved chapters, the synthesis trends toward repentance, truthful confession, " +
-    "mercy with accountability, and restoration rather than retaliation. " +
+    `${bridgeA} ${t0} and ${t1}, ${bridgeB} ` +
     "A careful reading keeps justice proportional while preserving room for forgiveness and covenant repair. " +
     `This summary was produced from ${refs.length} cited chapter sources in the current filters.`
   );
 }
 
-function buildShortLlmSummary(query, topThemes, refs, selectedAnnotationCount) {
+function buildShortLlmSummary(query, topThemes, refs, selectedAnnotationCount, generationSeed) {
+  const intro = pickFrom([
+    "Short local summary",
+    "Brief generated summary",
+    "Condensed local reading"
+  ], generationSeed + 41);
+  const frame = pickFrom([
+    "the cited chapters point most strongly to",
+    "the strongest textual pull is toward",
+    "the chapter evidence centers on"
+  ], generationSeed + 47);
+
   return (
-    `Short local summary: For "${query}", the cited chapters point most strongly to ${topThemes.join(", ") || "scriptural alignment"}. ` +
+    `${intro}: For "${query}", ${frame} ${topThemes.join(", ") || "scriptural alignment"}. ` +
     `The answer was synthesized from ${refs.length} chapter citations with ${selectedAnnotationCount} top annotations used as secondary context.`
   );
 }
 
-function buildGeneratedAttemptAnswer(query, topChapters, topThemes, selectedAnnotations) {
+function buildGeneratedAttemptAnswer(query, topChapters, topThemes, selectedAnnotations, generationSeed) {
   const qTokens = tokenize(query);
   const evidenceSentences = [];
 
@@ -1360,12 +1416,22 @@ function buildGeneratedAttemptAnswer(query, topChapters, topThemes, selectedAnno
 
   const dominant = topThemes[0] || "scriptural guidance";
   const supporting = topThemes.slice(1).join(" and ") || "contextual discernment";
+  const lead = pickFrom([
+    "Generated local attempt",
+    "Local synthesized attempt",
+    "Scripture-grounded generated attempt"
+  ], generationSeed + 59);
+  const action = pickFrom([
+    "walk in truth, repent where needed, and pursue restorative mercy under accountable justice",
+    "choose confession, repair, and mercy while keeping correction proportional",
+    "prioritize truthful repentance and covenant-faithful restoration over revenge"
+  ], generationSeed + 67);
 
   return (
-    `For the question "${query}", the local model reads the cited chapters with ${dominant} as the dominant lens and ${supporting} as supporting context. ` +
+    `${lead}: For the question "${query}", the local model reads the cited chapters with ${dominant} as the dominant lens and ${supporting} as supporting context. ` +
     `${evidenceLead} ` +
     `Annotation signals selected for comparison were: ${annotationLead}. ` +
-    "Generated attempt: pursue truth, repentance, and restorative mercy while keeping justice accountable and proportional to what the cited text actually says."
+    `Generated attempt: ${action}, always constrained by what the cited text actually says.`
   );
 }
 
@@ -1762,8 +1828,13 @@ async function askMiniLlm() {
   setLoadingState(true, "Mini LLM understanding pass 3/3: synthesizing concise local answer...", 86);
   await nextFrame();
 
-  const shortSummary = buildShortLlmSummary(query, topThemes, refs, annotationSelection.selected.length);
-  const generatedAttemptAnswer = buildGeneratedAttemptAnswer(query, top, topThemes, annotationSelection.selected);
+  const generationSeed = hashString(
+    `${query}|${refs.join("|")}|${Date.now()}|${state.llmSummaryHistory.length}|${state.llmGenerationNonce}`
+  );
+  state.llmGenerationNonce += 1;
+
+  const shortSummary = buildShortLlmSummary(query, topThemes, refs, annotationSelection.selected.length, generationSeed);
+  const generatedAttemptAnswer = buildGeneratedAttemptAnswer(query, top, topThemes, annotationSelection.selected, generationSeed);
 
   const answer =
     `Mini LLM (local retrieval + synthesis)\n` +
@@ -1777,7 +1848,7 @@ async function askMiniLlm() {
     `Citations:\n- ${refs.join("\n- ")}\n\n` +
     `${noFuturePolicyText}\n\n` +
     `LLM Attempt Answer Summarized:\n` +
-    `${buildLlmAttemptAnswerSummarized(query, combined, refs)}\n\n` +
+    `${buildLlmAttemptAnswerSummarized(query, combined, refs, generationSeed)}\n\n` +
     `Generated Attempt Answer (scripture-first):\n` +
     `${generatedAttemptAnswer}\n\n` +
     `Annotation Summary Answer:\n` +
